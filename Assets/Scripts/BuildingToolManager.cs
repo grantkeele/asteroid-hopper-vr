@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using OVRTouchSample;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -26,12 +27,13 @@ public class BuildingToolManager : MonoBehaviour
     [SerializeField] private GameObject partsContainer;
 
     [Header("Editor Constants")]
-    [SerializeField] private Vector3 selectionOffset;
-    [SerializeField] private float selectionRadius;
+    [SerializeField] private Vector3 selectorOffset;
+    [SerializeField] private float selectorRadius;
     [SerializeField] private float nodeRadius;
+    [SerializeField] private float gripThreshold = 0.5f;
 
     [Header("Prefabs")]
-    [SerializeField] private GameObject selectionSpherePrefab;
+    [SerializeField] private GameObject selectorSpherePrefab;
     [SerializeField] private GameObject nodeDisplayPrefab;
 
     [Header("Materials")]
@@ -40,14 +42,20 @@ public class BuildingToolManager : MonoBehaviour
     [SerializeField] private Material nodeUnselectedMat;
 
 
-    private GameObject mainHand;
-    private GameObject selectionSphere;
+    private GameObject primaryHand;
+    private GameObject selectorSphere;
     private GameObject[] allParts;
     private GameObject selectedPart;
     private Node selectedNode;
 
-    private bool toolButtonDown;
+    private Vector3 handAnchorPos;
+    private Vector3 playerAnchorPos;
+
+    private bool toolButtonHeld = false;
+    private bool gripHeld = false;
+
     private Vector3 partDist;
+    private Vector3 handDist;
 
 
     [HideInInspector] public BuildingTool currentTool;
@@ -56,21 +64,22 @@ public class BuildingToolManager : MonoBehaviour
 
     void Start()
     {
-        mainHand = rightHand;
+        primaryHand = rightHand;
         currentTool = BuildingTool.SelectPart;
 
-        selectionSphere = Instantiate(selectionSpherePrefab, mainHand.transform);
-        selectionSphere.transform.localScale = new Vector3(selectionRadius*2, selectionRadius*2, selectionRadius*2);
-        selectionSphere.transform.position = selectionOffset;
+        selectorSphere = Instantiate(selectorSpherePrefab, primaryHand.transform);
+        selectorSphere.transform.localScale = new Vector3(selectorRadius*2, selectorRadius*2, selectorRadius*2);
+        selectorSphere.transform.position = selectorOffset;
     }
 
 
     void Update()
     {
-        // Update list of parts in ship
+        // Update list of all parts in this ship
         allParts = GetChildren(partsContainer);
 
 
+        // switch tool if X (left hand, lower button) is pressed
         if(OVRInput.GetDown(OVRInput.Button.Three)){
             if (currentTool == BuildingTool.MovePartFree)
                 currentTool = BuildingTool.SelectPart;
@@ -78,6 +87,30 @@ public class BuildingToolManager : MonoBehaviour
                 currentTool = BuildingTool.MovePartFree;
             }
             Debug.Log(currentTool);
+
+        }
+
+
+        // Handle player movement if secondary grip button is held
+        if (OVRInput.Get(OVRInput.Axis1D.SecondaryHandTrigger) >= gripThreshold){
+
+            // Set the anchor position on the first frame the grip is held
+            if (gripHeld == false) {
+                handAnchorPos = primaryHand.transform.position;
+                playerAnchorPos = transform.position;
+                gripHeld = true;
+            }
+
+            Vector3 handOffset = handAnchorPos - primaryHand.transform.position;
+            transform.position = playerAnchorPos + handOffset;
+        }
+        else {
+            gripHeld = false;
+        }
+
+
+        if (OVRInput.Get(OVRInput.Button.One)) {
+            selectedPart.transform.position = selectorSphere.transform.position + partDist;
         }
 
 
@@ -89,11 +122,11 @@ public class BuildingToolManager : MonoBehaviour
                 if (selectedPart != null){
 
                     if(OVRInput.GetDown(OVRInput.Button.One)){
-                        partDist = selectedPart.transform.position - selectionSphere.transform.position;
+                        partDist = selectedPart.transform.position - selectorSphere.transform.position;
                     }
 
                     if(OVRInput.Get(OVRInput.Button.One)){
-                        selectedPart.transform.position = selectionSphere.transform.position + partDist;
+                        selectedPart.transform.position = selectorSphere.transform.position + partDist;
                     }
                 }
                 
@@ -107,8 +140,8 @@ public class BuildingToolManager : MonoBehaviour
                     part.GetComponent<MeshRenderer>().material = part.GetComponent<StructuralPart>().mainMaterial;
                     }
 
-                    if (IsPartInRange(allParts, selectionSphere.transform.position)){
-                        selectedPart = SelectClosestPart(allParts, selectionSphere.transform.position);
+                    if (IsPartInRange(allParts, selectorSphere.transform.position)){
+                        selectedPart = SelectClosestPart(allParts, selectorSphere.transform.position);
                         
                         selectedPart.GetComponent<MeshRenderer>().material = selectedPart.GetComponent<StructuralPart>().selectedMaterial;
                         Debug.Log("Selected part " + selectedPart.name);
@@ -125,8 +158,8 @@ public class BuildingToolManager : MonoBehaviour
 
                 if(OVRInput.GetDown(OVRInput.Button.One)){
                     if (selectedPart != null){
-                        if (IsNodeInRange(selectedPart, selectionSphere.transform.position)){
-                            selectedNode = SelectClosestNode(selectedPart, selectionSphere.transform.position);
+                        if (IsNodeInRange(selectedPart, selectorSphere.transform.position)){
+                            selectedNode = SelectClosestNode(selectedPart, selectorSphere.transform.position);
                             
                             //selectedNode.GetComponent<MeshRenderer>().material = selectedPart.GetComponent<StructuralPart>().selectedMaterial;
                             Debug.Log("Selected node " + selectedNode.Position);
@@ -161,7 +194,7 @@ public class BuildingToolManager : MonoBehaviour
             Vector3 closestPoint = collider.ClosestPoint(handPos);
             float dist = (closestPoint - handPos).magnitude;
 
-            if (dist < selectionRadius){
+            if (dist < selectorRadius){
                 return true;
             }
         }
@@ -171,7 +204,7 @@ public class BuildingToolManager : MonoBehaviour
 
     GameObject SelectClosestPart(GameObject[] allParts, Vector3 handPos){
 
-        float minDist = selectionRadius;
+        float minDist = selectorRadius;
         GameObject closestPart = new GameObject();
 
         for (int i = 0; i < allParts.Length; i++){
@@ -194,10 +227,10 @@ public class BuildingToolManager : MonoBehaviour
         StructuralPart partScript = selectedPart.GetComponent<StructuralPart>();
         Node[] nodes = partScript.worldNodes;
 
-        float inclusionRadius = nodeRadius + selectionRadius;
+        float inclusionRadius = nodeRadius + selectorRadius;
 
         for (int i = 0; i < nodes.Length; i++){
-            // Return first node inside of selection radius
+            // Return first node inside of selector radius
             Vector3 nodePos = nodes[i].Position;
 
             float dist = (nodePos - handPos).magnitude;
@@ -213,7 +246,7 @@ public class BuildingToolManager : MonoBehaviour
         StructuralPart partScript = selectedPart.GetComponent<StructuralPart>();
         Node[] nodes = partScript.worldNodes;
 
-        float inclusionRadius = nodeRadius + selectionRadius;
+        float inclusionRadius = nodeRadius + selectorRadius;
         float minDist = inclusionRadius;
         Node closestNode = new Node();
 
